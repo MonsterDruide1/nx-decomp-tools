@@ -97,6 +97,14 @@ fn parse_elf_faster(bytes: &[u8]) -> Result<Elf<'_>> {
         let is_rela = dyn_info.pltrel == dynamic::DT_RELA;
         elf.pltrelocs =
             RelocSection::parse(bytes, dyn_info.jmprel, dyn_info.pltrelsz, is_rela, ctx)?;
+
+        let hash_offset = dyn_info.hash.context("no hash")? as usize;
+        // number of symbols (entries in .hash section) is stored at offset 4
+        // (https://github.com/m4b/goblin/blob/86de3b4b04c49e2f80ec9ebd8f60c059b7213fb7/src/elf/mod.rs#L519)
+        let num_syms = u32::from_le_bytes(bytes[hash_offset+4..hash_offset+8].try_into()?) as usize;
+        elf.dynsyms = Symtab::parse(bytes, dyn_info.symtab, num_syms, ctx)?;
+
+        elf.dynstrtab = Strtab::parse(bytes, dyn_info.strtab, dyn_info.strsz, 0x0)?;
     }
 
     Ok(elf)
@@ -129,10 +137,10 @@ pub struct SymbolStringTable<'elf> {
 }
 
 impl<'elf> SymbolStringTable<'elf> {
-    pub fn from_elf(elf: &'elf OwnedElf) -> Result<Self> {
+    pub fn from_elf(elf: &'elf OwnedElf, sh_type: u32) -> Result<Self> {
         let bytes = &*elf.as_owner().1;
         for shdr in &elf.section_headers {
-            if shdr.sh_type == section_header::SHT_SYMTAB {
+            if shdr.sh_type == sh_type {
                 let table_hdr = elf
                     .section_headers
                     .get(shdr.sh_link as usize)
@@ -173,7 +181,7 @@ pub fn is_undefined_sym(sym: &Sym) -> bool {
 }
 
 pub fn find_function_symbol_by_name(elf: &OwnedElf, name: &str) -> Result<Sym> {
-    let strtab = SymbolStringTable::from_elf(elf)?;
+    let strtab = SymbolStringTable::from_elf(elf, section_header::SHT_SYMTAB)?;
 
     for symbol in elf.syms.iter().filter(filter_out_useless_syms) {
         if name == strtab.get_string(symbol.st_name) {
@@ -189,9 +197,24 @@ pub fn make_symbol_map_by_name(elf: &OwnedElf) -> Result<SymbolTableByName<'_>> 
         Default::default(),
     );
 
-    let strtab = SymbolStringTable::from_elf(elf)?;
+    let strtab = SymbolStringTable::from_elf(elf, section_header::SHT_SYMTAB)?;
 
     for symbol in elf.syms.iter().filter(filter_out_useless_syms) {
+        map.entry(strtab.get_string(symbol.st_name))
+            .or_insert(symbol);
+    }
+    Ok(map)
+}
+
+pub fn make_dynsym_map_by_name(elf: &OwnedElf) -> Result<SymbolTableByName<'_>> {
+    let mut map = SymbolTableByName::with_capacity_and_hasher(
+        elf.dynsyms.iter().filter(filter_out_useless_syms).count(),
+        Default::default(),
+    );
+
+    let strtab = SymbolStringTable::from_elf(elf, section_header::SHT_DYNSYM)?;
+
+    for symbol in elf.dynsyms.iter().filter(filter_out_useless_syms) {
         map.entry(strtab.get_string(symbol.st_name))
             .or_insert(symbol);
     }
@@ -215,7 +238,7 @@ pub fn make_addr_to_name_map(elf: &OwnedElf) -> Result<AddrToNameMap<'_>> {
         Default::default(),
     );
 
-    let strtab = SymbolStringTable::from_elf(elf)?;
+    let strtab = SymbolStringTable::from_elf(elf, section_header::SHT_SYMTAB)?;
 
     for symbol in elf.syms.iter().filter(filter_out_useless_syms) {
         map.entry(symbol.st_value)
