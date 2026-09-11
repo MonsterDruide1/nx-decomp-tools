@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ida_util import FunctionStatus, get_status_from_color, get_repo_root
+from ida_util import FunctionStatus, get_status_from_color, get_repo_root, RGB_BGR
 
 def getNameToPath():
     mapping = {}
