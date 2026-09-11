@@ -86,12 +86,12 @@ def can_overwrite_name(addr: int, new_name: str):
     return False
 
 def can_overwrite_folder(addr: int, new_folder: str):
-    if not new_folder or new_folder == "UNKNOWN":
+    if not new_folder or new_folder.startswith("UNKNOWN"):
         return False
 
     old_folder = getFuncAbsPath(addr).rsplit("/", 1)[0].strip("/")
     # If we don't have an existing folder, then the function can always be renamed.
-    if not old_folder or old_folder == "UNKNOWN":
+    if not old_folder or old_folder.startswith("UNKNOWN"):
         return True
 
     # Otherwise, we return false to avoid losing temporary folders.
